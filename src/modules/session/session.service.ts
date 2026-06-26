@@ -180,9 +180,24 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
     }
   }
 
-  async onApplicationBootstrap(): Promise<void> {
+  onApplicationBootstrap(): void {
     if (process.env.AUTO_START_SESSIONS !== 'true') return;
 
+    // Detach: reconnecting previously-authenticated sessions can take many seconds (sequential engine
+    // launches with throttle delays). NestJS awaits this hook *before* app.listen() binds the port, so
+    // awaiting the loop here would keep the HTTP server — and the dashboard — unreachable until every
+    // session finished reconnecting. Fire-and-forget instead; main.ts has an unhandledRejection backstop
+    // and we still attach an explicit .catch.
+    void this.autoStartSessions().catch((error: unknown) => {
+      this.logger.error(
+        'Auto-start sessions failed',
+        error instanceof Error ? error.stack : String(error),
+        { action: 'auto_start_failed' },
+      );
+    });
+  }
+
+  private async autoStartSessions(): Promise<void> {
     const sessions = await this.sessionRepository.find({
       where: { phone: Not(IsNull()), status: SessionStatus.DISCONNECTED },
     });

@@ -1515,14 +1515,32 @@ describe('SessionService', () => {
       else process.env.AUTO_START_SESSIONS = originalFlag;
     });
 
+    // Drain the microtask queue so the detached autoStartSessions() chain (all mocked to resolve
+    // synchronously) runs to completion before assertions.
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
     it('does nothing when AUTO_START_SESSIONS is not enabled', async () => {
       delete process.env.AUTO_START_SESSIONS;
       const startSpy = jest.spyOn(service, 'start').mockResolvedValue(undefined as never);
 
-      await service.onApplicationBootstrap();
+      service.onApplicationBootstrap();
+      await flush();
 
       expect(repository.find).not.toHaveBeenCalled();
       expect(startSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not block the bootstrap hook on session reconnection', () => {
+      // The hook must return synchronously (undefined, not a promise) so NestJS app.listen() binds
+      // the port immediately instead of waiting for every session to reconnect.
+      process.env.AUTO_START_SESSIONS = 'true';
+      (repository.find as jest.Mock).mockResolvedValue([{ id: 'a', name: 'A' }]);
+      jest.spyOn(service as unknown as { delay: () => Promise<void> }, 'delay').mockResolvedValue(undefined);
+      jest.spyOn(service, 'start').mockResolvedValue(undefined as never);
+
+      const result = service.onApplicationBootstrap();
+
+      expect(result).toBeUndefined();
     });
 
     it('starts no engine when there are no previously-authenticated sessions', async () => {
@@ -1530,7 +1548,8 @@ describe('SessionService', () => {
       (repository.find as jest.Mock).mockResolvedValue([]);
       const startSpy = jest.spyOn(service, 'start').mockResolvedValue(undefined as never);
 
-      await service.onApplicationBootstrap();
+      service.onApplicationBootstrap();
+      await flush();
 
       expect(startSpy).not.toHaveBeenCalled();
     });
@@ -1544,7 +1563,8 @@ describe('SessionService', () => {
       jest.spyOn(service as unknown as { delay: () => Promise<void> }, 'delay').mockResolvedValue(undefined);
       const startSpy = jest.spyOn(service, 'start').mockResolvedValue(undefined as never);
 
-      await service.onApplicationBootstrap();
+      service.onApplicationBootstrap();
+      await flush();
 
       expect(startSpy).toHaveBeenCalledTimes(2);
       expect(startSpy).toHaveBeenCalledWith('a');
@@ -1563,7 +1583,8 @@ describe('SessionService', () => {
         .mockRejectedValueOnce(new Error('boom'))
         .mockResolvedValueOnce(undefined as never);
 
-      await service.onApplicationBootstrap();
+      service.onApplicationBootstrap();
+      await flush();
 
       expect(startSpy).toHaveBeenCalledTimes(2);
     });
