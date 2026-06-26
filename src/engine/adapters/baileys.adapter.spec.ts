@@ -127,7 +127,7 @@ describe('BaileysAdapter lifecycle & status', () => {
     expect(onReady).toHaveBeenCalledWith('628999', 'Me');
   });
 
-  it('on a logged-out close: DISCONNECTED, onDisconnected, and NO reconnect', async () => {
+  it('on a logged-out close: DISCONNECTED, onDisconnected(code 401), and NO reconnect', async () => {
     const onDisconnected = jest.fn();
     const adapter = newAdapter();
     await adapter.initialize(noopCallbacks({ onDisconnected }));
@@ -139,8 +139,24 @@ describe('BaileysAdapter lifecycle & status', () => {
       lastDisconnect: { error: { output: { statusCode: 401 } } },
     });
     expect(adapter.getStatus()).toBe(EngineStatus.DISCONNECTED);
-    expect(onDisconnected).toHaveBeenCalled();
+    expect(onDisconnected).toHaveBeenCalledWith('logged out', 401);
     expect(makeWASocket).not.toHaveBeenCalled(); // no reconnect
+  });
+
+  it('on a non-401 terminal close (440 connectionReplaced): DISCONNECTED, onDisconnected(code), NO reconnect', async () => {
+    const onDisconnected = jest.fn();
+    const adapter = newAdapter();
+    await adapter.initialize(noopCallbacks({ onDisconnected }));
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    const makeWASocket = jest.requireMock('@whiskeysockets/baileys').default as jest.Mock;
+    makeWASocket.mockClear();
+    fakeSock.fire('connection.update', {
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 440 } } },
+    });
+    expect(adapter.getStatus()).toBe(EngineStatus.DISCONNECTED);
+    expect(onDisconnected).toHaveBeenCalledWith('connection replaced', 440);
+    expect(makeWASocket).not.toHaveBeenCalled(); // terminal — no reconnect storm
   });
 
   it('on a recoverable close: reconnects (re-creates the socket) and does NOT fire onDisconnected', async () => {

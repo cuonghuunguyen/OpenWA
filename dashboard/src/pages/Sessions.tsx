@@ -549,9 +549,11 @@ export function Sessions() {
                     <span className="info-label">{t('sessions.card.lastActive')}</span>
                     <span className="info-value">{formatLastActive(session.lastActive)}</span>
                   </div>
-                  {session.status === 'failed' && session.lastError ? (
+                  {(session.status === 'failed' || session.status === 'disconnected') && session.lastError ? (
                     <div className="info-row session-error">
-                      <span className="info-label">{t('sessions.card.error')}</span>
+                      <span className="info-label">
+                        {t(session.status === 'failed' ? 'sessions.card.error' : 'sessions.card.reason')}
+                      </span>
                       <span className="info-value error-text" title={session.lastError}>
                         {session.lastError}
                       </span>

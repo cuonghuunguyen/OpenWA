@@ -25,7 +25,8 @@ export interface Session {
   lastActive?: string;
   createdAt: string;
   updatedAt: string;
-  /** Human-readable reason for the most recent terminal engine failure (set only when status is 'failed'). */
+  /** Human-readable reason the session isn't working: an engine failure (status 'failed') or why the
+   *  number disconnected (status 'disconnected', e.g. logged out / banned / replaced). */
   lastError?: string | null;
 }
 

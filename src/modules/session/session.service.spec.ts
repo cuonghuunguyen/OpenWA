@@ -531,6 +531,16 @@ describe('SessionService', () => {
 
       expect(result.lastError).toBeUndefined();
     });
+
+    it('surfaces a human-readable disconnect reason via lastError when DISCONNECTED', async () => {
+      const callbacks = await startAndCapture();
+      callbacks.onDisconnected?.('connection replaced', 440);
+
+      (repository.findOne as jest.Mock).mockResolvedValue(createMockSession({ status: SessionStatus.DISCONNECTED }));
+      const result = await service.findOne('sess-uuid-1');
+
+      expect(result.lastError).toMatch(/Connected somewhere else/i);
+    });
   });
 
   // ── engine-identity guard: stale-callback isolation ───────────────

@@ -1,15 +1,19 @@
-import * as path from 'path';
-import * as qrcode from 'qrcode';
 import type * as BaileysLib from '@whiskeysockets/baileys';
 import type { AnyMessageContent, MiscMessageGenerationOptions, WAMessage, WASocket } from '@whiskeysockets/baileys';
-import { buildIncomingMessageFromBaileys, mapBaileysStatus } from './baileys-message-mapper';
-import { mapBaileysGroup, mapBaileysGroupInfo } from './baileys-group-mapper';
 import type { ILogger } from '@whiskeysockets/baileys/lib/Utils/logger.js';
+import * as path from 'path';
+import * as qrcode from 'qrcode';
+import { EngineNotReadyError } from '../../common/errors/engine-not-ready.error';
+import { EngineNotSupportedError } from '../../common/errors/engine-not-supported.error';
+import { MessageNotFoundError } from '../../common/errors/message-not-found.error';
+import { loadRemoteMediaBuffer } from '../../common/media/load-remote-media';
+import { createLogger } from '../../common/services/logger.service';
 import {
-  ChatState,
+  Catalog,
   Channel,
   ChannelMessage,
-  Catalog,
+  ChatState,
+  ChatSummary,
   Contact,
   ContactCard,
   EngineEventCallbacks,
@@ -30,15 +34,11 @@ import {
   RevokedMessage,
   Status,
   StatusResult,
-  ChatSummary,
   TextStatusOptions,
 } from '../interfaces/whatsapp-engine.interface';
-import { loadRemoteMediaBuffer } from '../../common/media/load-remote-media';
-import { EngineNotReadyError } from '../../common/errors/engine-not-ready.error';
-import { EngineNotSupportedError } from '../../common/errors/engine-not-supported.error';
-import { MessageNotFoundError } from '../../common/errors/message-not-found.error';
-import { createLogger } from '../../common/services/logger.service';
 import { BaileysAdapterConfig, BaileysLogger } from '../types/baileys.types';
+import { mapBaileysGroup, mapBaileysGroupInfo } from './baileys-group-mapper';
+import { buildIncomingMessageFromBaileys, mapBaileysStatus } from './baileys-message-mapper';
 import { BaileysSessionStore } from './baileys-session-store';
 import { capInboundMedia } from './inbound-media-cap';
 
@@ -101,6 +101,17 @@ function createBaileysLogger(): BaileysLogger {
 
 export class BaileysAdapter implements IWhatsAppEngine {
   private static readonly MAX_RECONNECT_ATTEMPTS = 5;
+
+  /**
+   * Baileys `DisconnectReason` codes that are terminal — reconnecting can't recover them, so we
+   * surface them via `onDisconnected(code)` and stop. Hardcoded (not read off `this.lib`) because
+   * these are stable WhatsApp protocol numbers: 401 loggedOut, 403 forbidden (ban), 411
+   * multideviceMismatch, 440 connectionReplaced, 500 badSession. Everything else (408/428/503/515…)
+   * is transient and reconnects.
+   */
+  private static readonly TERMINAL_DISCONNECT_CODES: ReadonlySet<number> = new Set([
+    401, 403, 411, 440, 500,
+  ]);
 
   private readonly logger = createLogger('BaileysAdapter');
   private readonly authPath: string;
@@ -304,10 +315,13 @@ export class BaileysAdapter implements IWhatsAppEngine {
         return;
       }
 
-      if (statusCode === this.lib?.DisconnectReason.loggedOut) {
-        // Credentials invalidated — terminal. Re-linking requires a fresh QR/pairing.
+      if (statusCode !== undefined && BaileysAdapter.TERMINAL_DISCONNECT_CODES.has(statusCode)) {
+        // Terminal — creds invalidated (401), banned (403), device mismatch (411), connection
+        // taken over elsewhere (440), or bad session (500). Reconnecting would either fail forever
+        // or fight the other session, so we stop and let the user resolve it (re-scan / unlink).
+        // The code is passed through so consumers map a precise, actionable explanation.
         this.setStatus(EngineStatus.DISCONNECTED);
-        this.callbacks.onDisconnected?.('logged out');
+        this.callbacks.onDisconnected?.(terminalDisconnectLabel(statusCode), statusCode);
         return;
       }
 
@@ -1118,5 +1132,23 @@ export class BaileysAdapter implements IWhatsAppEngine {
       return null;
     }
     return id.split(':')[0].split('@')[0] || null;
+  }
+}
+
+/** Short human-readable label for a terminal Baileys disconnect code (logging + non-code consumers). */
+function terminalDisconnectLabel(statusCode: number): string {
+  switch (statusCode) {
+    case 401:
+      return 'logged out';
+    case 403:
+      return 'forbidden';
+    case 411:
+      return 'multidevice mismatch';
+    case 440:
+      return 'connection replaced';
+    case 500:
+      return 'bad session';
+    default:
+      return `disconnected (${statusCode})`;
   }
 }

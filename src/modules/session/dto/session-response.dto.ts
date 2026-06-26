@@ -30,8 +30,10 @@ export class SessionResponseDto {
   updatedAt: Date;
 
   @ApiPropertyOptional({
-    description: 'Human-readable reason for the most recent terminal engine failure (only set when status is FAILED).',
-    example: 'Failed to launch the browser process: spawn /usr/bin/chromium ENOENT',
+    description:
+      'Human-readable reason the session is not working: an engine failure (when status is FAILED) ' +
+      'or why the number disconnected (when status is DISCONNECTED, e.g. logged out / banned / replaced).',
+    example: 'Logged out — the device was unlinked from the phone. Re-scan the QR code to reconnect.',
   })
   lastError?: string | null;
 }

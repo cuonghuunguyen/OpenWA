@@ -332,7 +332,14 @@ export interface EngineEventCallbacks {
   onMessageAck?: (messageId: string, status: DeliveryStatus) => void;
   onMessageRevoked?: (message: RevokedMessage) => void;
   onMessageReaction?: (event: ReactionEvent) => void;
-  onDisconnected?: (reason: string) => void;
+  /**
+   * Fired on a terminal disconnect that the user must resolve (credentials invalidated, banned,
+   * connection taken over elsewhere). `reason` is a short human-readable label; `statusCode`, when
+   * present, is the underlying WhatsApp/Baileys disconnect code (401/403/411/440/500) so consumers
+   * can map a precise, actionable explanation instead of parsing the free-form reason text.
+   * Transient drops do NOT fire this — they reconnect silently.
+   */
+  onDisconnected?: (reason: string, statusCode?: number) => void;
   onStateChanged?: (state: EngineStatus) => void;
   /**
    * Fired on a terminal initialization/authentication failure (e.g. Chromium

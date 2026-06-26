@@ -250,7 +250,8 @@
       "phone": "Phone",
       "sessionId": "Session ID",
       "lastActive": "Last Active",
-      "error": "Error"
+      "error": "Error",
+      "reason": "Reason"
     },
     "forceKill": {
       "title": "Kill Stuck Session",

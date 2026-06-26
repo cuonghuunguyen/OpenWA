@@ -1,0 +1,15 @@
+packages:
+  - dashboard
+
+ignoredBuiltDependencies:
+  - '@scarf/scarf'
+  - puppeteer
+  - ssh2
+  - unrs-resolver
+
+onlyBuiltDependencies:
+  - '@whiskeysockets/baileys'
+  - cpu-features
+  - msgpackr-extract
+  - protobufjs
+  - sqlite3

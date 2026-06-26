@@ -80,6 +80,28 @@ export function clampReconnectDelay(rawDelay: number, baseDelay: number): number
   return clampNumber(Number.isFinite(rawDelay) ? rawDelay : baseDelay, 0, RECONNECT_DELAY_CAP_MS);
 }
 
+/**
+ * Build a human-readable disconnect reason for the dashboard from the engine's status code
+ * (WhatsApp/Baileys 401/403/411/440/500) — falling back to the raw label when no code is given
+ * (e.g. the whatsapp-web.js engine, which reports only a string).
+ */
+export function describeDisconnect(reason: string, statusCode?: number): string {
+  switch (statusCode) {
+    case 401:
+      return 'Logged out — the device was unlinked from the phone. Re-scan the QR code to reconnect.';
+    case 403:
+      return 'Restricted by WhatsApp (possible spam/ban). Review sending volume, then re-scan the QR code.';
+    case 411:
+      return 'Multi-device mismatch. Re-scan the QR code to reconnect.';
+    case 440:
+      return 'Connected somewhere else — WhatsApp allows one active link per number. Close the other session, then reconnect.';
+    case 500:
+      return 'Session became invalid and could not be restored. Re-scan the QR code to reconnect.';
+    default:
+      return reason ? `Disconnected: ${reason}` : 'Disconnected.';
+  }
+}
+
 @Injectable()
 export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicationBootstrap {
   private readonly logger = createLogger('SessionService');
@@ -303,12 +325,15 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
   }
 
   /**
-   * Populate the transient `lastError` field from the in-memory error map. Only a
-   * FAILED session carries an error; any other status clears it so a recovered
-   * session never shows a stale failure reason.
+   * Populate the transient `lastError` field from the in-memory error map. A FAILED session
+   * carries an engine-failure reason; a DISCONNECTED session carries a disconnect reason (logged
+   * out, banned, replaced, …) when we have one. Any other status clears it so a recovered session
+   * never shows a stale reason. (Transient DISCONNECTED states with no recorded reason — e.g. the
+   * startup reset — read back undefined, so nothing stale is shown.)
    */
   private attachLastError(session: Session): Session {
-    session.lastError = session.status === SessionStatus.FAILED ? this.sessionErrors.get(session.id) : undefined;
+    const surfaces = session.status === SessionStatus.FAILED || session.status === SessionStatus.DISCONNECTED;
+    session.lastError = surfaces ? this.sessionErrors.get(session.id) : undefined;
     return session;
   }
 
@@ -758,20 +783,25 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
           }
         });
       },
-      onDisconnected: (reason: string): void => {
+      onDisconnected: (reason: string, statusCode?: number): void => {
         if (!this.isLiveEngine(id, engine)) return;
         this.logger.warn(`Session disconnected: ${reason}`, {
           sessionId: id,
           reason,
+          statusCode,
           action: 'disconnected',
         });
 
-        void this.webhookService.dispatch(id, 'session.disconnected', { sessionId: id, reason });
+        // Remember a human-readable reason so findOne/findAll surface it via `lastError` and the
+        // dashboard shows why the number dropped. Cleared automatically on a successful reconnect.
+        this.sessionErrors.set(id, describeDisconnect(reason, statusCode));
+
+        void this.webhookService.dispatch(id, 'session.disconnected', { sessionId: id, reason, statusCode });
 
         // Execute hook for disconnected event
         void this.hookManager.execute(
           'session:disconnected',
-          { reason },
+          { reason, statusCode },
           {
             sessionId: id,
             source: 'Engine',
