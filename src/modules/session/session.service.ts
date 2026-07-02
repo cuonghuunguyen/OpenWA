@@ -7,8 +7,11 @@ import {
   OnModuleInit,
   OnApplicationBootstrap,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository, InjectDataSource } from '@nestjs/typeorm';
 import { Repository, In, Not, IsNull, DataSource, FindManyOptions } from 'typeorm';
+import * as fs from 'fs';
+import * as path from 'path';
 import { Session, SessionStatus } from './entities/session.entity';
 import { Message, MessageDirection, MessageStatus } from '../message/entities/message.entity';
 import { CreateSessionDto } from './dto';
@@ -153,6 +156,7 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
     private readonly eventsGateway: EventsGateway,
     private readonly webhookService: WebhookService,
     private readonly hookManager: HookManager,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -400,10 +404,33 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
         sessionId: id,
         action: 'delete',
       });
+
+      // Baileys persists creds to disk keyed by session NAME (engineFactory.create's
+      // sessionId: session.name), and callers reuse the same name across delete+recreate
+      // (waziper's instance_id never changes for an account). Leaving already-`registered`
+      // creds behind means the next session with this name resumes the dead pairing instead
+      // of generating a fresh QR, and WhatsApp rejects it every time (401 logged out) before a
+      // QR is ever produced. Best-effort: a leftover folder is a disk nit, not worth failing an
+      // otherwise-successful delete over.
+      await this.removeBaileysAuthState(session.name);
     } finally {
       // Always clear the teardown mark so a later recreate/start with this id isn't suppressed.
       this.stoppingSessions.delete(id);
       this.lastDispatchedStatus.delete(id);
+    }
+  }
+
+  /** Best-effort removal of the on-disk Baileys multi-file auth state for a deleted session. */
+  private async removeBaileysAuthState(sessionName: string): Promise<void> {
+    const authDir = this.configService.get<string>('engine.baileys.authDir') ?? './data/baileys';
+    const authPath = path.join(authDir, sessionName);
+    try {
+      await fs.promises.rm(authPath, { recursive: true, force: true });
+    } catch (err) {
+      this.logger.warn(`Failed to remove Baileys auth state for '${sessionName}'`, {
+        authPath,
+        err: err instanceof Error ? err.message : err,
+      });
     }
   }
 

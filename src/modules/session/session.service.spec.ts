@@ -1,7 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken, getDataSourceToken } from '@nestjs/typeorm';
+import { ConfigService } from '@nestjs/config';
 import { Repository, DataSource, In } from 'typeorm';
 import { NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
 import { SessionService, ACK_RECONCILE_DELAY_MS } from './session.service';
 import { Session, SessionStatus } from './entities/session.entity';
 import { Message, MessageStatus } from '../message/entities/message.entity';
@@ -39,6 +42,7 @@ describe('SessionService', () => {
   let eventsGateway: jest.Mocked<Partial<EventsGateway>>;
   let webhookService: jest.Mocked<Partial<WebhookService>>;
   let hookManager: jest.Mocked<Partial<HookManager>>;
+  let configService: jest.Mocked<Partial<ConfigService>>;
   let mockEngine: Record<string, jest.Mock>;
 
   beforeEach(async () => {
@@ -104,6 +108,10 @@ describe('SessionService', () => {
       execute: jest.fn().mockResolvedValue({ continue: true, data: {} }),
     };
 
+    configService = {
+      get: jest.fn().mockReturnValue('./data/baileys'),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SessionService,
@@ -123,6 +131,7 @@ describe('SessionService', () => {
         { provide: EventsGateway, useValue: eventsGateway },
         { provide: WebhookService, useValue: webhookService },
         { provide: HookManager, useValue: hookManager },
+        { provide: ConfigService, useValue: configService },
       ],
     }).compile();
 
@@ -185,6 +194,29 @@ describe('SessionService', () => {
 
       await expect(service.delete('sess-uuid-1')).rejects.toThrow('db down');
       expect(stoppingOf().has('sess-uuid-1')).toBe(false); // mark still cleared on failure
+    });
+
+    it('delete() removes the on-disk Baileys auth state for the session name', async () => {
+      (repository.findOne as jest.Mock).mockResolvedValue(createMockSession({ name: 'INSTANCE123' }));
+      const rm = jest.spyOn(fs.promises, 'rm').mockResolvedValue(undefined);
+
+      await service.delete('sess-uuid-1');
+
+      expect(configService.get).toHaveBeenCalledWith('engine.baileys.authDir');
+      expect(rm).toHaveBeenCalledWith(path.join('./data/baileys', 'INSTANCE123'), {
+        recursive: true,
+        force: true,
+      });
+      rm.mockRestore();
+    });
+
+    it('delete() still succeeds and clears the stop-mark when auth-state removal fails', async () => {
+      (repository.findOne as jest.Mock).mockResolvedValue(createMockSession());
+      const rm = jest.spyOn(fs.promises, 'rm').mockRejectedValue(new Error('EACCES'));
+
+      await expect(service.delete('sess-uuid-1')).resolves.toBeUndefined();
+      expect(stoppingOf().has('sess-uuid-1')).toBe(false);
+      rm.mockRestore();
     });
 
     it('forceKill() force-destroys the engine, reconciles the map, and marks the session stopping', async () => {
